@@ -20,6 +20,13 @@ import aiohttp
 import aiofiles
 from aiohttp import ClientTimeout
 from main import TEST, REQUESTS_QUANTITY, MIN_VALUE_THRESHOLD, MAX_LINES_IN_TX_CACHE, MAX_LINES_IN_HASH_CACHE, BTC_PRICE_DIR
+from dotenv import load_dotenv
+
+load_dotenv()
+rpc_user = os.getenv('RPC_USER')
+rpc_password = os.getenv('RPC_PASSWORD')
+rpc_host = os.getenv('RPC_HOST')
+rpc_port = os.getenv('RPC_PORT')
 
 global_count = 0
 avg_cache_vin = []
@@ -232,7 +239,8 @@ def check_time(stats):
     print(f"Функция sync_rpc_connection занимает {percentage:.2f}% общего времени выполнения.")
 
 def get_rpc_connection():
-    rpc_url = "http://yourusername:yourpassword@localhost:8332"
+    rpc_url = f"http://{rpc_user}:{rpc_password}@{rpc_host}:{rpc_port}"
+    print(rpc_url)
     rpc_connection = AuthServiceProxy(rpc_url, timeout=200)
     return rpc_connection
 
