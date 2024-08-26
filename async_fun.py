@@ -21,6 +21,7 @@ import aiofiles
 from aiohttp import ClientTimeout
 from main import TEST, REQUESTS_QUANTITY, MIN_VALUE_THRESHOLD, MAX_LINES_IN_TX_CACHE, MAX_LINES_IN_HASH_CACHE, BTC_PRICE_DIR
 from dotenv import load_dotenv
+import traceback
 
 load_dotenv()
 rpc_user = os.getenv('RPC_USER')
@@ -194,7 +195,7 @@ def get_list_of_blocks_to_download(biggest_downloaded_block, rpc_connection):
         list_of_blocks_to_download = list(range(biggest_downloaded_block+1,current_block))
         return(list_of_blocks_to_download)
 
-def split_list_into_chunks(lst, QUANTITY_OF_BLOCKS_IN_ITERATION, MAX_ITERATIONS):
+def split_list_into_chunks(lst, QUANTITY_OF_BLOCKS_IN_ITERATION, MAX_ITERATIONS, blocks_to_remove):
     print(f'Первый блок для загрузки: {lst[0]}')
     print(f'Осталось загрузить блоков: {lst[-1]-lst[0]}')
 
@@ -206,6 +207,14 @@ def split_list_into_chunks(lst, QUANTITY_OF_BLOCKS_IN_ITERATION, MAX_ITERATIONS)
             print(f"\nИтерация - {current_iteration} из {MAX_ITERATIONS}, блоков: {current_blocks}.")
         else:    
             print(f"\nИтерация - {current_iteration} из {MAX_ITERATIONS}, блоков: {len(current_blocks)}.")
+
+        if blocks_to_remove:
+            print(f'проверка на блоки {blocks_to_remove} в чанке')
+            for i in blocks_to_remove:
+                if i in current_blocks:
+                    print('Есть, удаляем')
+                    current_blocks.remove(i)
+
         del lst[:QUANTITY_OF_BLOCKS_IN_ITERATION]
         yield current_blocks
 
@@ -241,7 +250,7 @@ def check_time(stats):
 def get_rpc_connection():
     rpc_url = f"http://{rpc_user}:{rpc_password}@{rpc_host}:{rpc_port}"
     print(rpc_url)
-    rpc_connection = AuthServiceProxy(rpc_url, timeout=200)
+    rpc_connection = AuthServiceProxy(rpc_url, timeout=1200)
     return rpc_connection
 
 def sync_rpc_connection(rpc_connection, rpc_method, *args):
@@ -283,11 +292,11 @@ def sync_rpc_connection(rpc_connection, rpc_method, *args):
 
 last_request_time = None
 
-async def async_rpc_connection(rpc_method, *args):
+async def async_rpc_connection(rpc_method, height, *args):
     global last_request_time
     url = "http://yourusername:yourpassword@localhost:8332"
     headers = {'content-type': 'application/json', 'Connection': 'close'}
-    timeout = ClientTimeout(total=240)
+    timeout = ClientTimeout(total=360)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for i in range(150):  # Повторяем попытки
             if last_request_time is not None:
@@ -320,8 +329,10 @@ async def async_rpc_connection(rpc_method, *args):
                         await asi_sleep(attempt)
 
             except Exception as e:
-                print(f'Ошибка запроса: {e}')
-                await asyncio.sleep(3)  # Задержка перед повторной попыткой
+                print(f'Ошибка запроса: {e}, блок {height}')
+                print(f'Попытка {i+1}')
+                print(traceback.format_exc())
+                await asyncio.sleep(10)  # Задержка перед повторной попыткой
 
         print("Не удалось установить соединение после 150 попыток.")
         exit()
@@ -331,11 +342,14 @@ async def asi_sleep(attempt):
         await asyncio.sleep(10)
     elif attempt >= 100:
         print('Большая задержка ответа')
-        await asyncio.sleep(15)
+        await asyncio.sleep(30)
     elif attempt == 150:
+        print('Exit из async def asi_sleep(attempt)')
         exit()
     else:
-        await asyncio.sleep(5)
+        print('Ожидание ответа, asi_sleep(attempt), attempt<50')
+        await asyncio.sleep(1)
+
 
 async def parsing_data(block_list):
     init_cache()
@@ -386,19 +400,19 @@ async def process_block(index, number, height, block_hash, block_time, transacti
     global tx_cache, blocks_hash_cache
     records_of_block = []
     print(f'Обработка блока {height}, {index+1}/{number}, транзакций: {len(transactions_of_block)}')
-    # print(f'Строк в tx_cache: {len(tx_cache)}')
-    # print(f"Размер tx_cache в памяти: {int((asizeof.asizeof(tx_cache))/1000000)} мегабайт")
-    # print(f'Строк в blocks_hash_cache: {len(blocks_hash_cache)}')
-    # print(f"Размер blocks_hash_cache в памяти: {int((asizeof.asizeof(blocks_hash_cache))/1000000)} мегабайт")
+
     btc_time_price = await get_btc_price_of_timestamp(block_time, btc_price)
     commands = [["getrawtransaction", [tx, 1, block_hash]] for tx in transactions_of_block]
     print(f'Отправка запроса для {height}')
     start_time = time.time()
-    tx_details_list = await async_rpc_connection(None, commands)
+    tx_details_list = await async_rpc_connection(None, height, commands)
+    # print(tx_details_list[0])
     end_time = time.time()
     print(f'Блок {height}, {index+1}/{number}, получение данных по \033[93mvout, сек: {round(end_time-start_time, 4)}\033[0m, транзакций: {len(tx_details_list)}')
     
     tx_details_list = await amount_and_counbase_filter(tx_details_list)
+    # print(tx_details_list[0])
+
     await save_to_cache(tx_details_list, 'tx_cache')  
             
     prev_tx_vout_to_current_tx_map = {}
@@ -427,7 +441,7 @@ async def process_block(index, number, height, block_hash, block_time, transacti
 def records_to_df(all_records):
     df = pd.DataFrame(all_records, columns=['Transaction_id', 'Wallet_id', 'Amount', 'Btc_block_time_price', 'Block_time', 'Block_height', 'Block_hash', 'n'])
     # Группировка данных и подсчет суммы по Amount и количества транзакций в каждой группе
-    df['Amount'] = df['Amount'].astype(float)
+    df['Amount'] = df['Amount'].astype('float64')
     df = df.groupby(['Transaction_id', 'Wallet_id', 'Btc_block_time_price', 'Block_time', 'Block_height', 'Block_hash', 'n']).agg(
         Amount=('Amount', 'sum'),
         Transactions_Count=('n', 'count')
@@ -498,7 +512,7 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
     print(f'Команд \033[93mс хэшем\033[0m: {commands_with_hash}, \033[93m{hash_for_vin_percnt}%\033[0m, осталось команд без хэша: {commands_without_hash}')
 
     start_time = time.time()
-    prev_tx_details_list = await async_rpc_connection(None, commands)
+    prev_tx_details_list = await async_rpc_connection(None, height, commands)
     end_time = time.time()
     
     # save_to_cache(prev_tx_details_list, 'hash_cache')
@@ -525,6 +539,7 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
         dwn_prev_tx_details_dict[tx['txid']] = tx
         
     for prev_tx_id, links in prev_tx_vout_to_current_tx_map.items():
+        # print(prev_tx_id, links)
         if prev_tx_id in dwn_prev_tx_details_dict:
             tx_details = dwn_prev_tx_details_dict[prev_tx_id]
             for vout_detail in tx_details['vout']:
@@ -550,7 +565,7 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
                                     
     prev_tx_vout_to_current_tx_map = {}
     dwn_prev_tx_details_dict = {}    
-        
+    # print(records)    
     end_time = time.time()
     print(f'Блок {height}, {index+1}/{number}. Команд {len(commands)}, из кэша {prev_tx_details_list_cache_count}, сумма {len(commands)+prev_tx_details_list_cache_count}, сколько скачать надо {prev_tx_id_count}')
     print(f'Блок {height}, {index+1}/{number}. Всего скачанных записей с продажей {len(records)}, должно равняться {vout_to_tx_map_count}')
@@ -561,11 +576,11 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
     upper_limit = vout_to_tx_map_count + (vout_to_tx_map_count * 0.03)
     lower_limit = vout_to_tx_map_count - (vout_to_tx_map_count * 0.03)
     if len(records) > upper_limit or len(records) < lower_limit:
-        print("\033[31mБлок {height}, {index+1}/{number}\033[0m")
+        print(f"\033[31mБлок {height}, {index+1}/{number}\033[0m")
         print("\033[31mБОЛЬШАЯ РАЗНИЦА!\033[0m")
     if (vout_to_tx_map_count - len(records))/vout_to_tx_map_count*100 > 20:
-        print('Разница больше 20 процентов, выход')
-        time.sleep(30)
+        print('\033[31mРазница больше 20 процентов\033[0m')
+        # time.sleep(1)
     return records
 
 
@@ -574,12 +589,12 @@ def get_statistik_data(data):
     max_block_height = data['Block_height'].max()
     return min_block_height, max_block_height
 
-async def async_save_data_to_parquet(data, min_block_height, max_block_height):
+async def async_save_data_to_parquet(data, min_block_height, max_block_height, DATA_DIRECTORY):
     loop = asyncio.get_running_loop()
     
     # Подготовка данных и создание имени файла
     data = data.sort_values(by='Block_height').reset_index(drop=True)
-    filename = f'парсинг транзакций/parsing/data/block_data_{min_block_height}-{max_block_height}.parquet'
+    filename = fr'{DATA_DIRECTORY}/block_data_{min_block_height}-{max_block_height}.parquet'
     
     # Асинхронное выполнение сохранения DataFrame
     loop.run_in_executor(None, save_data_to_parquet, data, filename)
@@ -603,7 +618,7 @@ def print_cicle_info(start_time, min_block_height, max_block_height, len_blocks_
     print(f'Средний процент загрузок tx из кэша: {statistics.mean(avg_cache_vin)}')
     print(f'Средний процент команд tx с хэшем: {statistics.mean(avg_hash_for_vin)}')
     print(f"Количество блоков для скачивания: {quantity_of_blocks_to_download}")
-    print("Обработка завершена, данные сохранены.")
+    print("\033[92mОбработка завершена, данные сохранены.\033[92m")
     time_of_circle = len_blocks_group/(int(cicle_time)/60)
     return time_of_circle
 
