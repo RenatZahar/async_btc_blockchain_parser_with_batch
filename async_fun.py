@@ -5,21 +5,18 @@ import re
 import gzip
 from datetime import datetime
 from collections import OrderedDict
-from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
+from bitcoinrpc.authproxy import AuthServiceProxy
 import cProfile
 import pstats
-import yappi
 import json
 import time
 import pickle
-from collections import deque
 import gc
-from pympler import asizeof
 import asyncio
 import aiohttp
 import aiofiles
 from aiohttp import ClientTimeout
-from main import TEST, REQUESTS_QUANTITY, MIN_VALUE_THRESHOLD, MAX_LINES_IN_TX_CACHE, MAX_LINES_IN_HASH_CACHE, BTC_PRICE_DIR
+from main import REQUESTS_QUANTITY, MIN_VALUE_THRESHOLD, MAX_LINES_IN_TX_CACHE, MAX_LINES_IN_HASH_CACHE, BTC_PRICE_DIR
 from dotenv import load_dotenv
 import traceback
 
@@ -82,9 +79,9 @@ def open_blocks_hash_cache(filename):
             print(f'Читаем {filename} из файла')
             return cache
 
+# сохранение кэша в файл не используется в данной версии
 async def async_save_cache_to_file(cache, filename):
     loop = asyncio.get_running_loop()
-    # Использование функции без декоратора
     await loop.run_in_executor(None, lambda: save_cache_to_file(cache, filename))
 
 async def save_caches():
@@ -239,11 +236,8 @@ async def amount_and_counbase_filter(tx_list):
 
 def check_time(stats):
     sync_rpc_stats = stats.stats[('парсинг транзакций\\parsing\\однопоточный скрипт с batch\\sync_fun.py', '148', 'sync_rpc_connection')]
-    # Время выполнения sync_rpc_connection
-    sync_rpc_time = sync_rpc_stats[3] # общее время в секундах
-    # Общее время выполнения всего кода
+    sync_rpc_time = sync_rpc_stats[3] 
     total_time = sum([info[3] for info in stats.stats.values()])
-    # Рассчитать процентное соотношение
     percentage = (sync_rpc_time / total_time) * 100
     print(f"Функция sync_rpc_connection занимает {percentage:.2f}% общего времени выполнения.")
 
@@ -267,18 +261,16 @@ def sync_rpc_connection(rpc_connection, rpc_method, *args):
                         try:
                             batch = batch_list[i:i + REQUESTS_QUANTITY]
                             responses.extend(rpc_connection.batch_(batch))
-                            break  # Выход из внутреннего цикла, если запрос успешен
+                            break 
                         except Exception as e:
                             attempt += 1
                             print(f'Пакетная ошибка: {e}, попытка {attempt} для пакета')
-                            # print(batch)
-                            # handle_sleep(attempt)
+
                 batch_list = []
                 return responses
             else:
                 raise ValueError("Некорректный формат аргументов для batch-запроса")
         else:
-            # Обрабатываем обычный запрос
             method = getattr(rpc_connection, rpc_method)
             response = method(*args)
             return response
@@ -286,7 +278,6 @@ def sync_rpc_connection(rpc_connection, rpc_method, *args):
         print(f'Размер запроса: {len(batch)}')
         print(f"Ошибка: {e}, ожидаем, попытка {attempt}")
         print(f'rpc_method: {rpc_method}, *args: {args}')
-        # handle_sleep(attempt)
     print("Не удалось установить соединение после 150 попыток.")
     return None
 
@@ -298,16 +289,14 @@ async def async_rpc_connection(rpc_method, height, *args):
     headers = {'content-type': 'application/json', 'Connection': 'close'}
     timeout = ClientTimeout(total=360)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        for i in range(150):  # Повторяем попытки
+        for i in range(150):  
             if last_request_time is not None:
                 elapsed_time = time.time() - last_request_time
                 if elapsed_time < 1:
                     await asyncio.sleep(1 - elapsed_time)
             if rpc_method is None:
-                # Для batch запросов
                 requests = [{"method": method, "params": params, "jsonrpc": "2.0", "id": i} for method, params in args[0]]
             else:
-                # Для обычного запроса
                 requests = [{"method": rpc_method, "params": args, "jsonrpc": "2.0", "id": 0}]
 
             try:
@@ -315,7 +304,6 @@ async def async_rpc_connection(rpc_method, height, *args):
                 async with session.post(url, data=json.dumps(requests), headers=headers) as response:
                     if response.status == 200:
                         json_response = await response.json()
-                        # Извлекаем результат из ответа
                         results = [item['result'] for item in json_response if 'result' in item]
                         return results
 
@@ -376,13 +364,7 @@ def get_transactions_of_blocks(block_list, rpc_connection):
         blocks_hashes.append(block['hash'])
         height.append(block['height'])
         transactions_of_groups_of_block.append(block['tx'])
-        # добавляем хэш в кэш, mthfcker
-        # txs = block['tx']
-        # print(block)
-        # for tx in txs:
-        #     blocks_hash_cache[tx] = block['hash']
-            # print(tx, blocks_hash_cache[tx])
-        # txs = []
+
     return height, blocks_hashes, block_times, transactions_of_groups_of_block
 
 async def process_all_blocks(heights, blocks_hashes, block_times, transactions_of_groups_of_block, btc_price, rpc_connection):
@@ -406,12 +388,10 @@ async def process_block(index, number, height, block_hash, block_time, transacti
     print(f'Отправка запроса для {height}')
     start_time = time.time()
     tx_details_list = await async_rpc_connection(None, height, commands)
-    # print(tx_details_list[0])
     end_time = time.time()
     print(f'Блок {height}, {index+1}/{number}, получение данных по \033[93mvout, сек: {round(end_time-start_time, 4)}\033[0m, транзакций: {len(tx_details_list)}')
     
     tx_details_list = await amount_and_counbase_filter(tx_details_list)
-    # print(tx_details_list[0])
 
     await save_to_cache(tx_details_list, 'tx_cache')  
             
@@ -440,7 +420,6 @@ async def process_block(index, number, height, block_hash, block_time, transacti
     
 def records_to_df(all_records):
     df = pd.DataFrame(all_records, columns=['Transaction_id', 'Wallet_id', 'Amount', 'Btc_block_time_price', 'Block_time', 'Block_height', 'Block_hash', 'n'])
-    # Группировка данных и подсчет суммы по Amount и количества транзакций в каждой группе
     df['Amount'] = df['Amount'].astype('float64')
     df = df.groupby(['Transaction_id', 'Wallet_id', 'Btc_block_time_price', 'Block_time', 'Block_height', 'Block_hash', 'n']).agg(
         Amount=('Amount', 'sum'),
@@ -448,7 +427,7 @@ def records_to_df(all_records):
                     ).reset_index()
     
     df = df.sort_values(by='Block_height')
-    df = df.reset_index(drop=True)  # сброс индекса с удалением старого
+    df = df.reset_index(drop=True)
     return df
 
 async def cleaning_tx_vout_data(tx_id, tx_details, height, block_hash, block_time, btc_time_price):
@@ -493,7 +472,6 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
             commands_with_hash += 1
             commands.append(["getrawtransaction", [prev_tx_id, 1, block_hash]]) 
         else:
-            # print(prev_tx_id)
             commands_without_hash += 1
             commands.append(["getrawtransaction", [prev_tx_id, 1]])
     try:
@@ -515,13 +493,10 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
     prev_tx_details_list = await async_rpc_connection(None, height, commands)
     end_time = time.time()
     
-    # save_to_cache(prev_tx_details_list, 'hash_cache')
     await save_to_cache(prev_tx_details_list, 'tx_cache', old_txs = True )
     
     print(f'Блок {height}, {index+1}/{number}. Получение данных по \033[93m vin, сек: {round(end_time-start_time, 4)}\033[0m, транзакций: {len(prev_tx_details_list)}')
-    # if len(prev_tx_details_list) != 0:
-    #     print(f'Время на транзакцию c rpc, сек: {round((end_time-start_time)/len(prev_tx_details_list), 6)}')
-    
+
     prev_tx_details_list = [
         tx_details for tx_details in prev_tx_details_list 
         if tx_details is not None and 
@@ -539,7 +514,6 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
         dwn_prev_tx_details_dict[tx['txid']] = tx
         
     for prev_tx_id, links in prev_tx_vout_to_current_tx_map.items():
-        # print(prev_tx_id, links)
         if prev_tx_id in dwn_prev_tx_details_dict:
             tx_details = dwn_prev_tx_details_dict[prev_tx_id]
             for vout_detail in tx_details['vout']:
@@ -554,18 +528,14 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
                         if prev_tx_id in tx_cache:  
                             tx_cache_details = tx_cache[prev_tx_id]
                             vout_list = tx_cache_details.get('vout', [])
-                            # Находим и удаляем нужный элемент vout
                             vout_list = [vout for vout in vout_list if vout.get('n') != vout_detail['n']]
-                            # Обновляем список vout в tx_cache
                             async with cache_lock:
                                 tx_cache[prev_tx_id]['vout'] = vout_list
-                                # Если после удаления список vout пуст, можно удалить всю запись tx_cache_details
                                 if not vout_list:
                                     del tx_cache[prev_tx_id]
                                     
     prev_tx_vout_to_current_tx_map = {}
     dwn_prev_tx_details_dict = {}    
-    # print(records)    
     end_time = time.time()
     print(f'Блок {height}, {index+1}/{number}. Команд {len(commands)}, из кэша {prev_tx_details_list_cache_count}, сумма {len(commands)+prev_tx_details_list_cache_count}, сколько скачать надо {prev_tx_id_count}')
     print(f'Блок {height}, {index+1}/{number}. Всего скачанных записей с продажей {len(records)}, должно равняться {vout_to_tx_map_count}')
@@ -580,7 +550,6 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
         print("\033[31mБОЛЬШАЯ РАЗНИЦА!\033[0m")
     if (vout_to_tx_map_count - len(records))/vout_to_tx_map_count*100 > 20:
         print('\033[31mРазница больше 20 процентов\033[0m')
-        # time.sleep(1)
     return records
 
 
