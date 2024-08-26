@@ -242,6 +242,7 @@ def check_time(stats):
     print(f"Функция sync_rpc_connection занимает {percentage:.2f}% общего времени выполнения.")
 
 def get_rpc_connection():
+    global rpc_user, rpc_password, rpc_host, rpc_port
     rpc_url = f"http://{rpc_user}:{rpc_password}@{rpc_host}:{rpc_port}"
     print(rpc_url)
     rpc_connection = AuthServiceProxy(rpc_url, timeout=1200)
