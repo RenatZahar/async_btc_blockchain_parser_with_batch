@@ -8,11 +8,6 @@ rpcthreads=8
 rpcworkqueue=10
 debug=http
 
-zmqpubhashblock=tcp://127.0.0.1:28332
-zmqpubhashtx=tcp://127.0.0.1:28333
-zmqpubrawblock=tcp://127.0.0.1:28334
-zmqpubrawtx=tcp://127.0.0.1:28335
-
 
 dbcache=6000
 maxmempool=5000
