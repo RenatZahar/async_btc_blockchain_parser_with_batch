@@ -285,7 +285,7 @@ last_request_time = None
 
 async def async_rpc_connection(rpc_method, height, *args):
     global last_request_time
-    url = "http://yourusername:yourpassword@localhost:8332"
+    url = f"http://{rpc_user}:{rpc_password}@{rpc_host}:{rpc_port}"
     headers = {'content-type': 'application/json', 'Connection': 'close'}
     timeout = ClientTimeout(total=360)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -495,7 +495,7 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
     end_time = time.time()
     
     await save_to_cache(prev_tx_details_list, 'tx_cache', old_txs = True )
-    
+
     async with print_lock:
         print(f'Блок {height}, {index+1}/{number}. Получение данных по \033[93m vin, сек: {round(end_time-start_time, 4)}\033[0m, транзакций: {len(prev_tx_details_list)}')
 
