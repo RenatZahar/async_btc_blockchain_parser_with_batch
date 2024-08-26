@@ -37,6 +37,7 @@ blocks_hash_cache = OrderedDict()
 cache_lock = asyncio.Lock()
 avg_lock = asyncio.Lock()
 rpc_lock = asyncio.Lock()
+print_lock = asyncio.Lock()
 
 def init_cache():
     global tx_cache, blocks_hash_cache
@@ -107,7 +108,6 @@ def general_cleaning_of_caches():
         num_to_remove = int(len(blocks_hash_cache) - MAX_LINES_IN_HASH_CACHE)
         for _ in range(num_to_remove):
             blocks_hash_cache.popitem(last=False)
-
     print(f'\nСтрок в tx_cache: {len(tx_cache)}')
     print(f'Строк в blocks_hash_cache: {len(blocks_hash_cache)}')
 
@@ -454,8 +454,9 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
         prev_tx_id_count += 1
         for i in vout_to_tx_map:
             vout_to_tx_map_count += 1
-            
-    print(f'Блок {height}, {index+1}/{number}. Всего tx для входов: {prev_tx_id_count}, входов: {vout_to_tx_map_count}')
+
+    async with print_lock:        
+        print(f'Блок {height}, {index+1}/{number}. Всего tx для входов: {prev_tx_id_count}, выходов: {vout_to_tx_map_count}')
     
     commands = []
     prev_tx_details_list_cache= []
@@ -485,9 +486,9 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
     async with avg_lock:
         avg_cache_vin.append(cache_vin_percnt)
         avg_hash_for_vin.append(hash_for_vin_percnt)
-    
-    print(f'Загружено tx \033[93mиз кэша\033[0m для \033[93mvin: {cache_vin_percnt}%\033[0m от всех vin, кол-во: {prev_tx_details_list_cache_count}')
-    print(f'Команд \033[93mс хэшем\033[0m: {commands_with_hash}, \033[93m{hash_for_vin_percnt}%\033[0m, осталось команд без хэша: {commands_without_hash}')
+    async with print_lock:
+        print(f'Загружено tx \033[93mиз кэша\033[0m для \033[93mvin: {cache_vin_percnt}%\033[0m от всех vin, кол-во: {prev_tx_details_list_cache_count}')
+        print(f'Команд \033[93mс хэшем\033[0m: {commands_with_hash}, \033[93m{hash_for_vin_percnt}%\033[0m, осталось команд без хэша: {commands_without_hash}')
 
     start_time = time.time()
     prev_tx_details_list = await async_rpc_connection(None, height, commands)
@@ -495,7 +496,8 @@ async def cleaning_tx_vin_data(index, number, prev_tx_vout_to_current_tx_map, he
     
     await save_to_cache(prev_tx_details_list, 'tx_cache', old_txs = True )
     
-    print(f'Блок {height}, {index+1}/{number}. Получение данных по \033[93m vin, сек: {round(end_time-start_time, 4)}\033[0m, транзакций: {len(prev_tx_details_list)}')
+    async with print_lock:
+        print(f'Блок {height}, {index+1}/{number}. Получение данных по \033[93m vin, сек: {round(end_time-start_time, 4)}\033[0m, транзакций: {len(prev_tx_details_list)}')
 
     prev_tx_details_list = [
         tx_details for tx_details in prev_tx_details_list 
